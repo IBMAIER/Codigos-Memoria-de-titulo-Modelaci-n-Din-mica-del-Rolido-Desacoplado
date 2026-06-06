@@ -1,0 +1,37 @@
+=================================================================
+           REPORTE DE ARQUITECTURA NAVAL (HIDROSTÁTICA)          
+=================================================================
+
+1. CONDICIONES DE DISEÑO
+   Calado de Diseño (T): 4.700 m
+   Eslora en la flotación (Lwl): 71.750 m
+   Manga máxima en la flotación (Bwl): 14.402 m
+
+2. PARÁMETROS GLOBALES DE VOLUMEN
+   Volumen Desplazado (∇): 2281.744 m^3
+   Desplazamiento (Δ): 2338.788 t (Densidad = 1.025 t/m^3)
+   Coeficiente de Bloque (Cb): 0.4698
+
+3. CENTRO DE CARENA (B)
+   LCB (Longitudinal Center of Buoyancy): 35184.55 mm
+   TCB (Transverse Center of Buoyancy): -0.00 mm
+   KB  (Vertical Center of Buoyancy desde quilla): 2884.64 mm
+
+4. PROPIEDADES DEL PLANO DE FLOTACIÓN
+   Área del plano de agua (Awp): 798.474 m^2
+   Coeficiente del plano de flotación (Cwp): 0.7727
+   Inercia Transversal Geométrica (IT): 11388.865 m^4
+   * NOTA IMPORTANTE: This is not the mass moment of inertia of the ship, 
+     but the geometric second moment of area of the waterplane.
+
+5. ESTABILIDAD TRANSVERSAL INICIAL
+   Radio Metacéntrico Transversal (BMT): 4.991 m
+=================================================================
+
+6. SECCIÓN MAESTRA Y COEFICIENTE C_M
+   Posición longitudinal Sección Maestra (X_M): 35.750 m
+   Área sumergida Sección Maestra (A_M): 58.7609 m^2
+   Caja de referencia B x T: 14.402 m x 4.700 m = 67.6907 m^2
+   Coeficiente de Sección Maestra (C_M = A_M / (B x T)): 0.8681
+   NOTA: Este C_M debe usarse en calcular_damping.py y solver_rolido_RK4.py
+=================================================================
