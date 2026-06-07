@@ -24,6 +24,7 @@ import sys
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 import time as _time
+from numba import njit
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -35,9 +36,9 @@ sys.path.insert(0, _SCRIPT_DIR)
 from funciones_dinamicas import discretizar_espectro_no_uniforme, CASOS_ESTUDIO
 from calcular_damping     import calcular_damping_B44
 
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 # PARÁMETROS GLOBALES DEL BUQUE  (constantes físicas del casco)
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 RHO   = 1025.0        # densidad agua [kg/m³]
 G     = 9.81          # gravedad [m/s²]
 L_PP  = 71.75         # eslora [m]
@@ -56,16 +57,16 @@ DELTA = RHO * G * NABLA   # desplazamiento [N]
 # Por lo tanto:  I_tot = m * k44_eff^2 = (rho*nabla) * k44^2
 # NO se aplica ningún factor adicional sobre A44.
 
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 # CARGA DE DATOS PRECOMPUTADOS
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 
 def _cargar_gz(kg_val: float) -> interp1d:
     """
     Lee resultados_curva_GZ.csv y devuelve un interpolador GZ(phi_rad).
     Convención: GZ positivo → momento restaurador (empuja al buque a 0).
     """
-    ruta = os.path.join(_SCRIPT_DIR, os.path.join(os.path.dirname(__file__), "..", "Resultados", "resultados_curva_GZ.csv"))
+    ruta = os.path.join(_SCRIPT_DIR, "resultados_curva_GZ.csv")
     df   = pd.read_csv(ruta, sep=";", decimal=",")
 
     col_gz = f"GZ_{kg_val}"
@@ -97,7 +98,7 @@ def _cargar_matrices_excitacion(kg_val: float):
         Si_mat   : (N_omega, N_phi)
         omegas_exc : (N_omega,)  frecuencias del Excel [rad/s]
     """
-    fname = os.path.join(_SCRIPT_DIR, os.path.join(os.path.dirname(__file__), "..", "Resultados", f"matrices_excitacion_KG{kg_val}.xlsx"))
+    fname = os.path.join(_SCRIPT_DIR, f"matrices_excitacion_KG{kg_val}.xlsx")
     if not os.path.exists(fname):
         # busca el más cercano
         for f in os.listdir(_SCRIPT_DIR):
@@ -121,11 +122,83 @@ def _cargar_matrices_excitacion(kg_val: float):
     return phis_rad, Ci_mat, Si_mat, omegas_exc
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 # FUNCIÓN PRINCIPAL DEL SOLVER
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
+
+
+# --------------------------------------------------
+# Numba JIT compiled routines
+# --------------------------------------------------
+@njit
+def momento_ola_numba(t_val, N_freq, omegas_w, epsilon, _phis, _Ci, _Si, pref, phi_val):
+    if N_freq == 0:
+        return 0.0
+    theta = omegas_w * t_val + epsilon
+    
+    phi_c = phi_val
+    if phi_c < _phis[0]: phi_c = _phis[0]
+    if phi_c > _phis[-1]: phi_c = _phis[-1]
+    
+    idx = np.searchsorted(_phis, phi_c)
+    if idx < 1: idx = 1
+    if idx > len(_phis) - 1: idx = len(_phis) - 1
+    
+    w = (phi_c - _phis[idx - 1]) / (_phis[idx] - _phis[idx - 1] + 1e-15)
+    ci_phi = np.empty(N_freq)
+    si_phi = np.empty(N_freq)
+    for i in range(N_freq):
+        ci_phi[i] = _Ci[i, idx - 1] * (1.0 - w) + _Ci[i, idx] * w
+        si_phi[i] = _Si[i, idx - 1] * (1.0 - w) + _Si[i, idx] * w
+        
+    ans = 0.0
+    for i in range(N_freq):
+        ans += pref[i] * (ci_phi[i] * np.cos(theta[i]) + si_phi[i] * np.sin(theta[i]))
+    return ans
+
+@njit
+def derivadas_numba(t_val, phi_val, phi_d_val, phi_a_deg_val, N_freq, omegas_w, epsilon, _phis, _Ci, _Si, pref, phi_a_grid, B44_grid, DELTA, phi_all, gz_all, K_aleta, I_tot):
+    Mw = momento_ola_numba(t_val, N_freq, omegas_w, epsilon, _phis, _Ci, _Si, pref, phi_val)
+    M_aleta = -K_aleta * phi_d_val
+    B44_val = np.interp(phi_a_deg_val, phi_a_grid, B44_grid)
+    B_mo = B44_val * phi_d_val
+    gz_val = np.interp(phi_val, phi_all, gz_all)
+    C_mo = DELTA * gz_val
+    phi_dd = (Mw + M_aleta - B_mo - C_mo) / I_tot
+    return phi_d_val, phi_dd, Mw, B_mo
+
+@njit
+def rk4_loop_numba(N_steps, t_vec, phi_vec, phi_d_vec, Mw_vec, dt, N_win, 
+                   N_freq, omegas_w, epsilon, _phis, _Ci, _Si, pref, 
+                   phi_a_grid, B44_grid, DELTA, phi_all, gz_all, K_aleta, I_tot):
+    for n in range(N_steps - 1):
+        t_n   = t_vec[n]
+        ph_n  = phi_vec[n]
+        phd_n = phi_d_vec[n]
+
+        win_start = max(0, n - N_win)
+        max_val = 0.0
+        for i in range(win_start, n+1):
+            v = abs(phi_vec[i])
+            if v > max_val: max_val = v
+        phi_a_eff = max(max_val * 180.0 / 3.141592653589793, 3.0)
+
+        k1_ph, k1_phd, Mw_n, _ = derivadas_numba(t_n, ph_n, phd_n, phi_a_eff, N_freq, omegas_w, epsilon, _phis, _Ci, _Si, pref, phi_a_grid, B44_grid, DELTA, phi_all, gz_all, K_aleta, I_tot)
+        k2_ph, k2_phd, _, _    = derivadas_numba(t_n + dt/2.0, ph_n + dt/2.0*k1_ph, phd_n + dt/2.0*k1_phd, phi_a_eff, N_freq, omegas_w, epsilon, _phis, _Ci, _Si, pref, phi_a_grid, B44_grid, DELTA, phi_all, gz_all, K_aleta, I_tot)
+        k3_ph, k3_phd, _, _    = derivadas_numba(t_n + dt/2.0, ph_n + dt/2.0*k2_ph, phd_n + dt/2.0*k2_phd, phi_a_eff, N_freq, omegas_w, epsilon, _phis, _Ci, _Si, pref, phi_a_grid, B44_grid, DELTA, phi_all, gz_all, K_aleta, I_tot)
+        k4_ph, k4_phd, _, _    = derivadas_numba(t_n + dt, ph_n + dt*k3_ph, phd_n + dt*k3_phd, phi_a_eff, N_freq, omegas_w, epsilon, _phis, _Ci, _Si, pref, phi_a_grid, B44_grid, DELTA, phi_all, gz_all, K_aleta, I_tot)
+
+        phi_vec[n+1]   = ph_n  + (dt/6.0)*(k1_ph  + 2.0*k2_ph  + 2.0*k3_ph  + k4_ph)
+        phi_d_vec[n+1] = phd_n + (dt/6.0)*(k1_phd + 2.0*k2_phd + 2.0*k3_phd + k4_phd)
+        Mw_vec[n]      = Mw_n
+
+        if phi_vec[n+1] < -1.5707963267948966: phi_vec[n+1] = -1.5707963267948966
+        if phi_vec[n+1] > 1.5707963267948966: phi_vec[n+1] = 1.5707963267948966
+        
+    return phi_vec, phi_d_vec, Mw_vec
 
 def simular_rolido(
+
     k44: float       = 5.5,    # radio de giro [m]
     kg_val: float    = 5.0,    # centro de gravedad vertical [m]
     caso_id: int     = 6,      # caso de espectro (1-12 de CASOS_ESTUDIO)
@@ -257,9 +330,9 @@ def simular_rolido(
     # ── 4. Cargar matrices Ci, Si ─────────────────────────────────────────────
     if caso_id == 0:
         # Roll decay: sin excitacion — matrices vacias
-        _Ci   = None
-        _Si   = None
-        _phis = None
+        _Ci   = np.zeros((1, 1))
+        _Si   = np.zeros((1, 1))
+        _phis = np.zeros(1)
         pref  = np.array([])
     else:
         phis_exc, Ci_mat, Si_mat, omegas_exc = _cargar_matrices_excitacion(kg_val)
@@ -304,15 +377,15 @@ def simular_rolido(
         "nu":    NU,
     }
 
-    # === PRE-INTERPOLACIÓN DE AMORTIGUAMIENTO (Speed-Up) ===
+    # === B44 Pre-interpolation ===
     # Precalculamos el B44 para amplitudes de 0.1 a 60 grados.
-    # Así evitamos llamar a las fórmulas complejas de Ikeda 48,000 veces por simulación.
+    # 
     phi_a_grid = np.linspace(0.1, 60.0, 60)
     B44_grid = np.zeros_like(phi_a_grid)
     for i, pa in enumerate(phi_a_grid):
         B44_grid[i] = calcular_damping_B44(pa, V_knots, omega_E_dam, ship_params)["B44_total"]
     
-    # Creamos un interpolador súper rápido
+    # Setup interpolation
     interp_B44 = interp1d(phi_a_grid, B44_grid, kind='linear', bounds_error=False, 
                           fill_value=(B44_grid[0], B44_grid[-1]))
     # =======================================================
@@ -332,82 +405,21 @@ def simular_rolido(
     # Amplitud efectiva para el amortiguamiento (actualizada cada paso)
     phi_a_eff = max(abs(phi0_deg), 5.0)  # [grados]; mínimo 5° para evitar B44→0
 
-    # ── 7. Funciones auxiliares del RHS ───────────────────────────────────────
+    # ── 7. Extraer arrays para Numba ─────────────────────────────────────────
+    phi_all = gz_interp.x
+    gz_all = gz_interp.y
 
-    def momento_ola(t_val: float, phi_val: float) -> float:
-        """Mw(t, phi) vectorizado — interpolacion numpy pura, sin loop Python.
-        En modo roll decay (N_freq==0) retorna 0."""
-        if N_freq == 0:
-            return 0.0
-        theta = omegas_w * t_val + epsilon          # (N_freq,)
-
-        # Interpolacion lineal vectorizada de Ci y Si en phi_val
-        # _phis es (N_phi,) ordenado; _Ci/_Si son (N_freq, N_phi)
-        phi_c = float(np.clip(phi_val, _phis[0], _phis[-1]))
-        idx   = int(np.searchsorted(_phis, phi_c))  # indice derecho
-        idx   = max(1, min(idx, len(_phis) - 1))
-        w     = (phi_c - _phis[idx - 1]) / (_phis[idx] - _phis[idx - 1] + 1e-15)
-        ci_phi = _Ci[:, idx - 1] * (1.0 - w) + _Ci[:, idx] * w   # (N_freq,)
-        si_phi = _Si[:, idx - 1] * (1.0 - w) + _Si[:, idx] * w   # (N_freq,)
-
-        return float(np.dot(pref, ci_phi * np.cos(theta) + si_phi * np.sin(theta)))
-
-    def amortiguamiento(phi_val: float, phi_d_val: float, phi_a_deg_val: float) -> float:
-        """B44 en [kg·m²/s] × phi_d_val → momento de amortiguamiento [N·m].
-        Usa la tabla pre-interpolada en vez de calcular Ikeda repetitivamente."""
-        B44_val = float(interp_B44(phi_a_deg_val))
-        return B44_val * phi_d_val   # B44 * phi_dot  [N·m]
-
-    def momento_restaurador(phi_val: float) -> float:
-        """C(phi) = Delta * GZ(phi) [N·m]"""
-        return DELTA * float(gz_interp(phi_val))
-
-    def derivadas(t_val: float, phi_val: float, phi_d_val: float,
-                  phi_a_deg_val: float):
-        """Retorna (phi_d, phi_dd)"""
-        Mw   = momento_ola(t_val, phi_val)
-        M_aleta = -K_aleta * phi_d_val
-        B_mo = amortiguamiento(phi_val, phi_d_val, phi_a_deg_val)
-        C_mo = momento_restaurador(phi_val)
-        phi_dd = (Mw + M_aleta - B_mo - C_mo) / I_tot
-        return phi_d_val, phi_dd, Mw, B_mo
-
-    # ── 8. Bucle RK4 ──────────────────────────────────────────────────────────
+    # ── 8. RK4 Loop (Numba) ──────────────────────────────────────────────
     if verbose:
-        print(f"\n  Iniciando integración RK4 ({N_steps} pasos)...")
+        print(f"\n  Starting RK4 integration ({N_steps} pasos)...")
 
-    # Ventana para calcular phi_a efectivo (últimos N_win pasos)
-    N_win = max(1, int(20.0 / dt))   # ~20 s de historial
-
-    for n in range(N_steps - 1):
-        t_n   = t_vec[n]
-        ph_n  = phi_vec[n]
-        phd_n = phi_d_vec[n]
-
-        # Amplitud efectiva del último ciclo (en grados)
-        win_start = max(0, n - N_win)
-        phi_a_eff = max(
-            np.degrees(np.max(np.abs(phi_vec[win_start:n+1]))),
-            3.0  # mínimo 3° para evitar B44 degenerado
-        )
-
-        # Coeficientes RK4 ────────────────────────────────────────────────────
-        k1_ph, k1_phd, Mw_n, _ = derivadas(t_n,            ph_n,            phd_n,            phi_a_eff)
-        k2_ph, k2_phd, _,    _ = derivadas(t_n + dt/2,     ph_n + dt/2*k1_ph,  phd_n + dt/2*k1_phd, phi_a_eff)
-        k3_ph, k3_phd, _,    _ = derivadas(t_n + dt/2,     ph_n + dt/2*k2_ph,  phd_n + dt/2*k2_phd, phi_a_eff)
-        k4_ph, k4_phd, _,    _ = derivadas(t_n + dt,       ph_n + dt*k3_ph,    phd_n + dt*k3_phd,    phi_a_eff)
-
-        phi_vec[n+1]   = ph_n  + dt/6*(k1_ph  + 2*k2_ph  + 2*k3_ph  + k4_ph)
-        phi_d_vec[n+1] = phd_n + dt/6*(k1_phd + 2*k2_phd + 2*k3_phd + k4_phd)
-        Mw_vec[n]      = Mw_n
-
-        # Limitar ángulo a ±90° (fuera de validez del modelo)
-        phi_vec[n+1] = np.clip(phi_vec[n+1], -np.pi/2, np.pi/2)
-
-        # Progreso
-        if verbose and (n % (N_steps // 10) == 0):
-            print(f"    t={t_n:7.1f}s  phi={np.degrees(ph_n):+6.2f}°  "
-                  f"phi_a_eff={phi_a_eff:.1f}°  Mw={Mw_n:.2e} N·m")
+    N_win = max(1, int(20.0 / dt))
+    
+    phi_vec, phi_d_vec, Mw_vec = rk4_loop_numba(
+        N_steps, t_vec, phi_vec, phi_d_vec, Mw_vec, dt, N_win, 
+        N_freq, omegas_w, epsilon, _phis, _Ci, _Si, pref, 
+        phi_a_grid, B44_grid, DELTA, phi_all, gz_all, K_aleta, I_tot
+    )
 
     # ── 9. Post-proceso ───────────────────────────────────────────────────────
     phi_deg_vec = np.degrees(phi_vec)
@@ -492,13 +504,13 @@ def simular_rolido(
     return t_vec, phi_vec, phi_d_vec, df_out
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 # EJECUCIÓN DIRECTA
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 if __name__ == "__main__":
-    # Configuración para Roll Decay
-    # Configuración de aletas
-    # K_aleta = 0 deshabilita el estabilizador
+    # Roll Decay setup: (ej. phi0_deg = 15.0).
+    # Fin setup: 
+    # 
     
     t, phi, phi_d, df = simular_rolido(
         k44      = 5.5,      # radio de giro [m]

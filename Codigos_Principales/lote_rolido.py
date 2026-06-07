@@ -32,9 +32,9 @@ sys.path.insert(0, _SCRIPT_DIR)
 from solver_rolido_RK4 import simular_rolido, RHO, NABLA, G
 from funciones_dinamicas import CASOS_ESTUDIO
 
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 # PARÁMETROS DEL ESTUDIO  (editar aquí)
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 m_ship   = RHO * NABLA                        # masa del buque [kg]
 
 I_XX_LIST = [53.9e6, 75.3e6, 100.0e6]        # I'_xx [kg·m²]
@@ -58,9 +58,9 @@ OUTPUT_FILE = os.path.join(_SCRIPT_DIR, "estudio_parametrico_rolido_ALETAS.xlsx"
 CHECKPOINT  = os.path.join(_SCRIPT_DIR, "_checkpoint_lote_aletas.pkl")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 # FUNCIONES DE ANÁLISIS
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 
 def phi_significativa(phi_vec: np.ndarray) -> float:
     """φ₁/₃: promedio del tercio superior de amplitudes de picos."""
@@ -122,6 +122,10 @@ def estadisticas(t_vec, phi_vec, phi_d_vec,
     phi_max = float(np.max(ph))
     phi_min = float(np.min(ph))
     phi_13  = float(np.degrees(phi_significativa(phi_vec_est)))
+    
+    phi_sorted = np.sort(np.abs(ph))[::-1]
+    phi_99 = float(phi_sorted[int(0.01 * len(phi_sorted))]) if len(phi_sorted) > 0 else 0.0
+    
     phd_rms = float(np.sqrt(np.mean(phd**2)))
     phd_max = float(np.max(np.abs(phd)))
     T_pk, w_pk = periodo_dominante(t_vec_est, phi_vec_est)
@@ -156,6 +160,7 @@ def estadisticas(t_vec, phi_vec, phi_d_vec,
         # ── Respuesta en rolido ───────────────────────────────────────────────
         "phi_rms_deg":       round(phi_rms, 4),
         "phi_13_deg":        round(phi_13, 4),
+        "phi_99_deg":        round(phi_99, 4),
         "phi_max_deg":       round(phi_max, 4),
         "phi_min_deg":       round(phi_min, 4),
         "phi_std_deg":       round(phi_std, 4),
@@ -207,9 +212,9 @@ def procesar_un_caso(args):
         return (n, None, err_msg)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 # FASE 1 — ROLL DECAY  (una vez por KG × k44)
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 
 def fase_decay() -> dict:
     """Retorna dict {(kg, k44_round): (zeta, delta, Tn)}."""
@@ -238,9 +243,9 @@ def fase_decay() -> dict:
     return decay_map
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 # FASE 2 — BUCLE PRINCIPAL
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 
 def fase_irregular(decay_map: dict) -> pd.DataFrame:
     # Construir lista completa de casos
@@ -301,9 +306,9 @@ def fase_irregular(decay_map: dict) -> pd.DataFrame:
     return pd.DataFrame(resultados)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 # GUARDADO EN EXCEL
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 
 def guardar_excel(df: pd.DataFrame, decay_map: dict):
     with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
@@ -344,9 +349,9 @@ def guardar_excel(df: pd.DataFrame, decay_map: dict):
         os.remove(CHECKPOINT)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 # MAIN
-# ══════════════════════════════════════════════════════════════════════════════
+# --------------------------------------------------
 
 if __name__ == "__main__":
     print("\nRadios de giro (k44):")
