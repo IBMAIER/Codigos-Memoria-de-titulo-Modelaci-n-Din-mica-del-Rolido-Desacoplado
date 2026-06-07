@@ -33,7 +33,7 @@ from solver_rolido_RK4 import simular_rolido, RHO, NABLA, G
 from funciones_dinamicas import CASOS_ESTUDIO
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Configuración de parámetros
+# PARÁMETROS DEL ESTUDIO  (editar aquí)
 # ══════════════════════════════════════════════════════════════════════════════
 m_ship   = RHO * NABLA                        # masa del buque [kg]
 
@@ -54,7 +54,7 @@ PHI0_DECAY = 15.0   # escora inicial decay [deg]
 
 # Guardado incremental: guarda el DataFrame cada SAVE_EVERY simulaciones
 SAVE_EVERY = 100
-OUTPUT_FILE = os.path.join(_SCRIPT_DIR, os.path.join(os.path.dirname(__file__), "..", "Resultados", "estudio_parametrico_rolido_ALETAS.xlsx"))
+OUTPUT_FILE = os.path.join(_SCRIPT_DIR, "estudio_parametrico_rolido_ALETAS.xlsx")
 CHECKPOINT  = os.path.join(_SCRIPT_DIR, "_checkpoint_lote_aletas.pkl")
 
 
@@ -126,6 +126,18 @@ def estadisticas(t_vec, phi_vec, phi_d_vec,
     phd_max = float(np.max(np.abs(phd)))
     T_pk, w_pk = periodo_dominante(t_vec_est, phi_vec_est)
 
+    # Cálculo Real vs Estadístico del tiempo excedido (>30°)
+    if len(t_vec_est) > 1:
+        dt_est = t_vec_est[1] - t_vec_est[0]
+        tiempo_total_est = t_vec_est[-1] - t_vec_est[0]
+        pasos_excedidos = np.sum(np.abs(ph) > 30.0)
+        Pt_real = (pasos_excedidos * dt_est / tiempo_total_est) * 100.0 if tiempo_total_est > 0 else 0.0
+    else:
+        Pt_real = 0.0
+        
+    from scipy.stats import norm
+    Pt_stat = 2 * (1 - norm.cdf(30.0, loc=0, scale=phi_rms)) * 100.0 if phi_rms > 0 else 0.0
+
     caso = CASOS_ESTUDIO[caso_id]
     return {
         # ── Identificadores ──────────────────────────────────────────────────
@@ -163,6 +175,10 @@ def estadisticas(t_vec, phi_vec, phi_d_vec,
         # ── Distribución ──────────────────────────────────────────────────────
         "kurtosis":          round(float(pd.Series(ph).kurt()), 4),
         "skewness":          round(float(pd.Series(ph).skew()), 4),
+        # ── Tiempos Excedidos (P_t > 30) ──────────────────────────────────────
+        "Pt_real_pct":       round(Pt_real, 4),
+        "Pt_stat_pct":       round(Pt_stat, 4),
+        "Pt_error_abs":      round(abs(Pt_real - Pt_stat), 4)
     }
 
 def procesar_un_caso(args):
