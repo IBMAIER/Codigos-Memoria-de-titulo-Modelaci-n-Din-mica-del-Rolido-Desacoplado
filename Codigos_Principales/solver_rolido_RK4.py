@@ -36,9 +36,9 @@ sys.path.insert(0, _SCRIPT_DIR)
 from funciones_dinamicas import discretizar_espectro_no_uniforme, CASOS_ESTUDIO
 from calcular_damping     import calcular_damping_B44
 
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 # PARÁMETROS GLOBALES DEL BUQUE  (constantes físicas del casco)
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 RHO   = 1025.0        # densidad agua [kg/m³]
 G     = 9.81          # gravedad [m/s²]
 L_PP  = 71.75         # eslora [m]
@@ -57,9 +57,9 @@ DELTA = RHO * G * NABLA   # desplazamiento [N]
 # Por lo tanto:  I_tot = m * k44_eff^2 = (rho*nabla) * k44^2
 # NO se aplica ningún factor adicional sobre A44.
 
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 # CARGA DE DATOS PRECOMPUTADOS
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 
 def _cargar_gz(kg_val: float) -> interp1d:
     """
@@ -122,14 +122,14 @@ def _cargar_matrices_excitacion(kg_val: float):
     return phis_rad, Ci_mat, Si_mat, omegas_exc
 
 
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 # FUNCIÓN PRINCIPAL DEL SOLVER
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 
 
-# --------------------------------------------------
-# Numba JIT compiled routines
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
+# RUTINAS COMPILADAS JIT (NUMBA) PARA MÁXIMA VELOCIDAD
+# ══════════════════════════════════════════════════════════════════════════════
 @njit
 def momento_ola_numba(t_val, N_freq, omegas_w, epsilon, _phis, _Ci, _Si, pref, phi_val):
     if N_freq == 0:
@@ -377,15 +377,15 @@ def simular_rolido(
         "nu":    NU,
     }
 
-    # === B44 Pre-interpolation ===
+    # === PRE-INTERPOLACIÓN DE AMORTIGUAMIENTO (Speed-Up) ===
     # Precalculamos el B44 para amplitudes de 0.1 a 60 grados.
-    # 
+    # Así evitamos llamar a las fórmulas complejas de Ikeda 48,000 veces por simulación.
     phi_a_grid = np.linspace(0.1, 60.0, 60)
     B44_grid = np.zeros_like(phi_a_grid)
     for i, pa in enumerate(phi_a_grid):
         B44_grid[i] = calcular_damping_B44(pa, V_knots, omega_E_dam, ship_params)["B44_total"]
     
-    # Setup interpolation
+    # Creamos un interpolador súper rápido
     interp_B44 = interp1d(phi_a_grid, B44_grid, kind='linear', bounds_error=False, 
                           fill_value=(B44_grid[0], B44_grid[-1]))
     # =======================================================
@@ -409,9 +409,9 @@ def simular_rolido(
     phi_all = gz_interp.x
     gz_all = gz_interp.y
 
-    # ── 8. RK4 Loop (Numba) ──────────────────────────────────────────────
+    # ── 8. Bucle RK4 (Vía Numba) ──────────────────────────────────────────────
     if verbose:
-        print(f"\n  Starting RK4 integration ({N_steps} pasos)...")
+        print(f"\n  Iniciando integración RK4 con NUMBA ({N_steps} pasos)...")
 
     N_win = max(1, int(20.0 / dt))
     
@@ -504,13 +504,13 @@ def simular_rolido(
     return t_vec, phi_vec, phi_d_vec, df_out
 
 
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 # EJECUCIÓN DIRECTA
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    # Roll Decay setup: (ej. phi0_deg = 15.0).
-    # Fin setup: 
-    # 
+    # Para probar sin olas (Roll Decay), pon caso_id = 0 y dale una escora inicial (ej. phi0_deg = 15.0).
+    # Para probar la influencia de las aletas, asigna un valor a K_aleta (ej. K_aleta = 1e6 o superior). 
+    # Si K_aleta = 0.0, las aletas están apagadas.
     
     t, phi, phi_d, df = simular_rolido(
         k44      = 5.5,      # radio de giro [m]

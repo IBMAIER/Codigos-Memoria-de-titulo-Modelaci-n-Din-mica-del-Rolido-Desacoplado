@@ -32,9 +32,9 @@ sys.path.insert(0, _SCRIPT_DIR)
 from solver_rolido_RK4 import simular_rolido, RHO, NABLA, G
 from funciones_dinamicas import CASOS_ESTUDIO
 
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 # PARÁMETROS DEL ESTUDIO  (editar aquí)
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 m_ship   = RHO * NABLA                        # masa del buque [kg]
 
 I_XX_LIST = [53.9e6, 75.3e6, 100.0e6]        # I'_xx [kg·m²]
@@ -58,9 +58,9 @@ OUTPUT_FILE = os.path.join(_SCRIPT_DIR, "estudio_parametrico_rolido_ALETAS.xlsx"
 CHECKPOINT  = os.path.join(_SCRIPT_DIR, "_checkpoint_lote_aletas.pkl")
 
 
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 # FUNCIONES DE ANÁLISIS
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 
 def phi_significativa(phi_vec: np.ndarray) -> float:
     """φ₁/₃: promedio del tercio superior de amplitudes de picos."""
@@ -126,8 +126,19 @@ def estadisticas(t_vec, phi_vec, phi_d_vec,
     phi_sorted = np.sort(np.abs(ph))[::-1]
     phi_99 = float(phi_sorted[int(0.01 * len(phi_sorted))]) if len(phi_sorted) > 0 else 0.0
     
-    phd_rms = float(np.sqrt(np.mean(phd**2)))
-    phd_max = float(np.max(np.abs(phd)))
+    phd_sorted = np.sort(np.abs(phd))[::-1]
+    phi_dot_rms = float(np.sqrt(np.mean(phd**2)))
+    phi_dot_13  = float(phi_significativa(phd))
+    phi_dot_99  = float(phd_sorted[int(0.01 * len(phd_sorted))]) if len(phd_sorted) > 0 else 0.0
+    phi_dot_max = float(np.max(np.abs(phd)))
+
+    phdd = np.gradient(phd, t_vec_est)
+    phdd_sorted = np.sort(np.abs(phdd))[::-1]
+    phi_ddot_rms = float(np.sqrt(np.mean(phdd**2)))
+    phi_ddot_13  = float(phi_significativa(phdd))
+    phi_ddot_99  = float(phdd_sorted[int(0.01 * len(phdd_sorted))]) if len(phdd_sorted) > 0 else 0.0
+    phi_ddot_max = float(np.max(np.abs(phdd)))
+
     T_pk, w_pk = periodo_dominante(t_vec_est, phi_vec_est)
 
     # Cálculo Real vs Estadístico del tiempo excedido (>30°)
@@ -166,8 +177,15 @@ def estadisticas(t_vec, phi_vec, phi_d_vec,
         "phi_std_deg":       round(phi_std, 4),
         "phi_p2p_deg":       round(phi_max - phi_min, 4),
         # ── Velocidad angular ─────────────────────────────────────────────────
-        "phi_dot_rms_deg_s": round(phd_rms, 4),
-        "phi_dot_max_deg_s": round(phd_max, 4),
+        "phi_dot_rms_deg_s":  round(phi_dot_rms, 4),
+        "phi_dot_13_deg_s":   round(phi_dot_13, 4),
+        "phi_dot_99_deg_s":   round(phi_dot_99, 4),
+        "phi_dot_max_deg_s":  round(phi_dot_max, 4),
+        # ── Aceleración angular ───────────────────────────────────────────────
+        "phi_ddot_rms_deg_s2": round(phi_ddot_rms, 4),
+        "phi_ddot_13_deg_s2":  round(phi_ddot_13, 4),
+        "phi_ddot_99_deg_s2":  round(phi_ddot_99, 4),
+        "phi_ddot_max_deg_s2": round(phi_ddot_max, 4),
         # ── Frecuencia dominante ──────────────────────────────────────────────
         "T_peak_s":          round(T_pk, 3) if not np.isnan(T_pk) else np.nan,
         "omega_peak_rad_s":  round(w_pk, 4) if not np.isnan(w_pk) else np.nan,
@@ -212,9 +230,9 @@ def procesar_un_caso(args):
         return (n, None, err_msg)
 
 
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 # FASE 1 — ROLL DECAY  (una vez por KG × k44)
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 
 def fase_decay() -> dict:
     """Retorna dict {(kg, k44_round): (zeta, delta, Tn)}."""
@@ -243,9 +261,9 @@ def fase_decay() -> dict:
     return decay_map
 
 
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 # FASE 2 — BUCLE PRINCIPAL
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 
 def fase_irregular(decay_map: dict) -> pd.DataFrame:
     # Construir lista completa de casos
@@ -272,7 +290,7 @@ def fase_irregular(decay_map: dict) -> pd.DataFrame:
     for n, (kg, k44, I_xx, V, cid, seed, kaleta) in enumerate(casos, 1):
         args_list.append((n, kg, k44, I_xx, V, cid, seed, kaleta, decay_map, DT, T_TOTAL, MU_DEG))
 
-    max_workers = max(1, os.cpu_count() - 1) # Deja un núcleo libre para el OS
+    max_workers = max(1, os.cpu_count() - 2) # Deja dos núcleos libres para el OS
     print(f"  Usando {max_workers} núcleos...")
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
@@ -306,9 +324,9 @@ def fase_irregular(decay_map: dict) -> pd.DataFrame:
     return pd.DataFrame(resultados)
 
 
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 # GUARDADO EN EXCEL
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 
 def guardar_excel(df: pd.DataFrame, decay_map: dict):
     with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
@@ -320,10 +338,17 @@ def guardar_excel(df: pd.DataFrame, decay_map: dict):
         agg = {
             "phi_rms_deg":       ["mean", "std"],
             "phi_13_deg":        ["mean", "std"],
+            "phi_99_deg":        ["mean", "std"],
             "phi_max_deg":       ["mean", "max"],
             "phi_std_deg":       ["mean"],
             "phi_dot_rms_deg_s": ["mean"],
+            "phi_dot_13_deg_s":  ["mean"],
+            "phi_dot_99_deg_s":  ["mean"],
             "phi_dot_max_deg_s": ["mean", "max"],
+            "phi_ddot_rms_deg_s2": ["mean"],
+            "phi_ddot_13_deg_s2":  ["mean"],
+            "phi_ddot_99_deg_s2":  ["mean"],
+            "phi_ddot_max_deg_s2": ["mean", "max"],
             "T_peak_s":          ["mean"],
             "phi_rms_over_Hs":   ["mean"],
             "Tp_over_Tn":        ["mean"],
@@ -349,9 +374,9 @@ def guardar_excel(df: pd.DataFrame, decay_map: dict):
         os.remove(CHECKPOINT)
 
 
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN
-# --------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     print("\nRadios de giro (k44):")
