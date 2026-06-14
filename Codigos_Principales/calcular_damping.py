@@ -147,7 +147,7 @@ def calcular_damping_B44(phi_a_deg, V_knots, omega_E, ship_params, exportar_eddy
         l0 = 0.3 * d
         lR = 0.5 * d
         
-        B44L = 0.5 * rho * V * L * d * kN * l0 * lR * (1.0 - 1.4 * OG / lR + 0.7 * OG / (l0 * lR))
+        B44L = 0.5 * rho * V * L * d * kN * l0 * lR * (1.0 - 1.4 * OG / lR + 0.7 * (OG**2) / (l0 * lR))
     else:
         B44L = 0.0
         
