@@ -33,7 +33,7 @@ from solver_rolido_RK4 import simular_rolido, RHO, NABLA, G
 from funciones_dinamicas import CASOS_ESTUDIO
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PARÁMETROS DEL ESTUDIO  (editar aquí)
+# Configuración de parámetros
 # ══════════════════════════════════════════════════════════════════════════════
 m_ship   = RHO * NABLA                        # masa del buque [kg]
 
@@ -54,7 +54,7 @@ PHI0_DECAY = 15.0   # escora inicial decay [deg]
 
 # Guardado incremental: guarda el DataFrame cada SAVE_EVERY simulaciones
 SAVE_EVERY = 100
-OUTPUT_FILE = os.path.join(_SCRIPT_DIR, "estudio_parametrico_rolido_ALETAS.xlsx")
+OUTPUT_FILE = os.path.join(_SCRIPT_DIR, os.path.join(os.path.dirname(__file__), "..", "Resultados", "estudio_parametrico_rolido_ALETAS.xlsx"))
 CHECKPOINT  = os.path.join(_SCRIPT_DIR, "_checkpoint_lote_aletas.pkl")
 
 
